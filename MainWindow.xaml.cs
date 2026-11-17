@@ -156,6 +156,8 @@ public partial class MainWindow : Window
             }
             result.IsRunning = ApplicationProcessControl.Find(result.LaunchPath).Count > 0;
         }
+        // Also notices launch-set profiles deleted or restored while Launchpad is open.
+        RefreshEuroScopeLaunchSetPresentation();
         UpdateEuroScopeInstanceSummary();
         RefreshBulkActionAvailability();
     }
@@ -643,13 +645,19 @@ public partial class MainWindow : Window
             foreach (var set in LaunchSets)
             {
                 int setCount = EnabledEntries(set).Count;
+                var missing = MissingProfileNames(set);
                 var setItem = new System.Windows.Controls.MenuItem
                 {
                     Header = (set.Id == ActiveLaunchSet?.Id && setCount > 0 ? "✓  " : "    ") +
-                        $"{set.Name} ({setCount} profile{(setCount == 1 ? "" : "s")})",
+                        $"{set.Name} ({setCount} profile{(setCount == 1 ? "" : "s")})" +
+                        (missing.Count > 0 ? $"  ⚠ {missing.Count} missing" : ""),
                     IsEnabled = setCount > 0,
-                    ToolTip = setCount > 0 ? "Launch starts these instances in order." : "Enable at least one instance in Edit launch sets…"
+                    ToolTip = setCount == 0 ? "Enable at least one instance in Edit launch sets…"
+                        : missing.Count > 0 ? $"Profile{(missing.Count == 1 ? "" : "s")} not found: {string.Join(", ", missing)}. " +
+                            "Launch skips the missing profiles; fix them in Edit launch sets…"
+                        : "Launch starts these instances in order."
                 };
+                if (missing.Count > 0) setItem.SetResourceReference(System.Windows.Controls.Control.ForegroundProperty, "ApplicationWarningText");
                 var setId = set.Id;
                 var setName = set.Name;
                 setItem.Click += (_, _) =>

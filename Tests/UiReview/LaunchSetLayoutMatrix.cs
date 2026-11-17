@@ -101,6 +101,26 @@ internal static partial class LayoutMatrix
         CheckButtonCaption(add);
         Require(add.IsEnabled, "A set below the instance limit must allow adding.");
 
+        // Duplicate and missing profiles are advisory and shown inline below Add instance; disabled entries are ignored.
+        var warningPanel = Required<Border>(window, "WarningPanel");
+        var warningText = Required<TextBlock>(window, "WarningText");
+        Require(!IsPresented(warningPanel) && !active.HasWarnings, "A set whose only moved profile is disabled must not warn.");
+
+        active.Rows[2].Enabled = true;
+        DrainBindings();
+        Require(IsPresented(warningPanel) && warningText.Text.Contains("ESAA OBS", StringComparison.Ordinal) &&
+            warningText.Text.Contains("skips", StringComparison.Ordinal), "An enabled missing profile must be explained inline.");
+        Require(active.ListDetail.Contains("check profiles", StringComparison.Ordinal), "The set list must flag a set with warnings.");
+
+        active.Rows[1].Profile = active.Rows[0].Profile;
+        DrainBindings();
+        Require(warningText.Text.Contains("ESAA TWR", StringComparison.Ordinal) && warningText.Text.Contains("same session", StringComparison.Ordinal),
+            "A profile used twice must be explained inline.");
+        // The panel scrolls with the instances, so at minimum size it may extend below the viewport; it must still wrap within the column.
+        warningPanel.BringIntoView(); DrainBindings(); LayoutValidation.CheckWindowContent(window);
+        Require(warningPanel.ActualWidth <= entries.ActualWidth + 1 && warningText.ActualWidth > 0,
+            "The warning must wrap within the instance column.");
+
         list.SelectedItem = list.Items.Cast<EuroScopeLaunchSetWindow.LaunchSetItem>().Single(set => set.Id == UiFixture.LaunchSetEmptyId);
         DrainBindings(); LayoutValidation.CheckWindowContent(window);
         Require(entries.Items.Count == 0 && IsPresented(Required<TextBlock>(window, "EmptyText")), "An empty set must explain that it has no instances.");

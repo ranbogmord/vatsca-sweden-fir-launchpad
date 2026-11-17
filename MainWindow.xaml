@@ -49,6 +49,13 @@
             <Setter Property="Content" Value="{Binding LaunchActionText}"/><Setter Property="IsEnabled" Value="{Binding LaunchEnabled}"/>
             <Setter Property="Padding" Value="4,4"/><Setter Property="ToolTip" Value="{Binding LaunchTooltip}"/>
             <Setter Property="AutomationProperties.Name" Value="{Binding LaunchTooltip}"/>
+            <Style.Triggers>
+                <!-- A launch set with a missing profile: Launch still works and skips it, but says so up front. -->
+                <DataTrigger Binding="{Binding LaunchTargetWarning}" Value="True">
+                    <Setter Property="Content" Value="⚠ Launch"/>
+                    <Setter Property="Foreground" Value="{DynamicResource ApplicationWarningText}"/>
+                </DataTrigger>
+            </Style.Triggers>
         </Style>
         <Style x:Key="WorkspaceTab" TargetType="RadioButton">
             <Setter Property="Foreground" Value="{DynamicResource ApplicationSecondaryText}"/>
@@ -183,8 +190,13 @@
                                 <TextBlock Text="{Binding DisplayName}"
                                            Foreground="{DynamicResource PrimaryText}" FontSize="{DynamicResource TextSize13}" FontWeight="Medium" TextTrimming="CharacterEllipsis"
                                            ToolTip="{Binding Description}" AutomationProperties.HelpText="{Binding Description}"/>
-                                <TextBlock Text="{Binding SelectedProfileCaption}" FontSize="{DynamicResource TextSize11}" Foreground="{DynamicResource ApplicationSecondaryText}"
-                                           Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedProfileCaption}"/>
+                                <TextBlock Text="{Binding SelectedProfileCaption}" FontSize="{DynamicResource TextSize11}"
+                                           Visibility="{Binding HasProfiles, Converter={StaticResource BoolToVisibility}}" TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedProfileCaption}">
+                                    <TextBlock.Style><Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="{DynamicResource ApplicationSecondaryText}"/>
+                                        <Style.Triggers><DataTrigger Binding="{Binding LaunchTargetWarning}" Value="True"><Setter Property="Foreground" Value="{DynamicResource ApplicationWarningText}"/></DataTrigger></Style.Triggers>
+                                    </Style></TextBlock.Style>
+                                </TextBlock>
                                 </StackPanel>
                                 <TextBlock Grid.Column="2" Text="{Binding DisplayInstalledVersion}" Margin="0,0,8,0" VerticalAlignment="Center"
                                            Foreground="{DynamicResource PrimaryText}" FontSize="{DynamicResource TextSize12}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayInstalledVersion}"/>

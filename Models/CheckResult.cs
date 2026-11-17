@@ -300,13 +300,38 @@ public class CheckResult : INotifyPropertyChanged
     public string SelectedProfileCaption => !HasProfiles ? "" :
         !string.IsNullOrEmpty(LaunchSequenceStatus) ? LaunchSequenceStatus :
         (IsRunning && !string.IsNullOrEmpty(RunningInstanceSummary) ? RunningInstanceSummary + " · " : "") +
-        (LaunchSetActive ? $"Launch set: {LaunchSetName} ({LaunchSetCount} profile{(LaunchSetCount == 1 ? "" : "s")})" :
+        (LaunchSetActive ? LaunchSetLabel + (LaunchTargetWarning ? $" · ⚠ {LaunchSetMissingProfiles.Count} missing" : "") :
             (IsRunning ? "Next launch: " : "Launch profile: ") + (SelectedProfile?.DisplayName ?? "No profile"));
+
+    private string LaunchSetLabel => $"Launch set: {LaunchSetName} ({LaunchSetCount} profile{(LaunchSetCount == 1 ? "" : "s")})";
 
     // Tooltip for the profile/launch-set picker next to Launch: names what Launch will start.
     public string LaunchTargetTooltip => LaunchSetActive
-        ? $"Launch set: {LaunchSetName} ({LaunchSetCount} profile{(LaunchSetCount == 1 ? "" : "s")})"
+        ? LaunchSetLabel + (LaunchTargetWarning ? Environment.NewLine + LaunchSetMissingText : "")
         : "Launch profile: " + (SelectedProfile?.DisplayName ?? "No profile");
+
+    /// <summary>The active launch set has enabled entries whose profile file no longer exists.</summary>
+    public bool LaunchTargetWarning => LaunchSetActive && LaunchSetMissingProfiles.Count > 0;
+
+    private string LaunchSetMissingText => LaunchSetMissingProfiles.Count == 1
+        ? $"⚠ Profile not found: {LaunchSetMissingProfiles[0]}. Launch skips it; fix it in Edit launch sets…"
+        : $"⚠ Profiles not found: {string.Join(", ", LaunchSetMissingProfiles)}. Launch skips them; fix them in Edit launch sets…";
+
+    private IReadOnlyList<string> _launchSetMissingProfiles = [];
+    /// <summary>Names of enabled launch-set profiles that are missing on disk, in launch order.</summary>
+    public IReadOnlyList<string> LaunchSetMissingProfiles
+    {
+        get => _launchSetMissingProfiles;
+        set
+        {
+            value ??= [];
+            if (_launchSetMissingProfiles.SequenceEqual(value)) return;
+            _launchSetMissingProfiles = value.ToArray();
+            OnPropertyChanged(nameof(LaunchSetMissingProfiles));
+            OnPropertyChanged(nameof(LaunchTooltip));
+            NotifyPresentation();
+        }
+    }
 
     // EuroScope launch set presentation. MainWindow owns the settings and sequencing.
     private bool _launchSetActive;
@@ -779,7 +804,8 @@ public class CheckResult : INotifyPropertyChanged
 
     public string LaunchTooltip => IsFolder ? "Open the GNG package folder." : IsRunning
         ? $"Show the running {DisplayName} window."
-        : IsWebApp ? $"Open {DisplayName} in its browser window." : $"Launch {DisplayName}.";
+        : IsWebApp ? $"Open {DisplayName} in its browser window."
+        : LaunchTargetWarning ? $"Launch {DisplayName} ({LaunchSetName}). {LaunchSetMissingText}" : $"Launch {DisplayName}.";
 
     public string InstalledVersion
     {
@@ -863,7 +889,7 @@ public class CheckResult : INotifyPropertyChanged
         foreach (var name in new[] { nameof(DisplayInstalledVersion), nameof(DisplayLatestVersion),
             nameof(LatestVersionCaption), nameof(RowStatusText), nameof(RowStatusKind), nameof(RowStatusSymbol),
             nameof(RowExplanation), nameof(HasGngTransfer), nameof(DetailHeading), nameof(DetailText), nameof(LaunchActionText),
-            nameof(UsageActionText), nameof(SelectedProfileCaption), nameof(LaunchTargetTooltip), nameof(ShowLaunch), nameof(ShowSimpleLaunch), nameof(ShowSplitLaunch), nameof(ShowRunningActions) })
+            nameof(UsageActionText), nameof(SelectedProfileCaption), nameof(LaunchTargetTooltip), nameof(LaunchTargetWarning), nameof(ShowLaunch), nameof(ShowSimpleLaunch), nameof(ShowSplitLaunch), nameof(ShowRunningActions) })
             OnPropertyChanged(name);
         NotifyRowAction();
     }

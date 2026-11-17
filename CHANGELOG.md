@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Start several EuroScope instances from one **Launch** with named launch sets. Each set lists profiles in order with an optional delay, and the sequence can be cancelled from the EuroScope row without closing started instances.
+- Start several EuroScope instances from one **Launch** with named launch sets. Each set lists profiles in order with an optional delay, and the sequence can be cancelled from the EuroScope row without closing started instances. Duplicate or missing profiles are shown as inline warnings in the launch-set editor and on the EuroScope row instead of in dialogs; Launch skips missing profiles.
 - Show, close or start missing EuroScope instances individually. Launchpad tracks only the instances it started, verified by process identity; other EuroScope windows are listed separately.
 - Include launch sets in **Start all…** after the other applications, and remove the instance receipt with Preferences and logs reset.
 

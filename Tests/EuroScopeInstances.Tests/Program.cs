@@ -62,20 +62,41 @@ try
         Equal("No profile", steps[2].ProfileName);
     });
 
-    Run("a profile used twice is warned about but not blocked", () =>
+    Run("a profile used twice starts without a launch-time note", () =>
     {
-        var steps = EuroScopeLaunchPlanner.Build([Entry(twr), Entry(twr.ToUpperInvariant())], [], _ => null);
+        var steps = EuroScopeLaunchPlanner.Build([Entry(twr), Entry(twr.ToUpperInvariant()), Entry(""), Entry("")], [], _ => null);
 
-        Equal(EuroScopeLaunchStepKind.Start, steps[1].Kind);
-        Equal<string?>(null, steps[0].Message);
-        True(steps[1].Message!.Contains("same session files"));
+        True(steps.All(step => step.Kind == EuroScopeLaunchStepKind.Start && step.Message is null));
     });
 
-    Run("blank profiles are not reported as duplicates", () =>
-    {
-        var steps = EuroScopeLaunchPlanner.Build([Entry(""), Entry("")], [], _ => null);
+    // Editor warnings
+    var dataFolder = Path.Combine(root, "warnings");
+    Directory.CreateDirectory(dataFolder);
+    var present = Path.Combine(dataFolder, "ESAA TWR.prf");
+    File.WriteAllText(present, "synthetic");
+    var gone = Path.Combine(dataFolder, "ESAA OBS.prf");
 
-        True(steps.All(step => step.Message is null));
+    Run("editor warnings name enabled duplicates and missing profiles only", () =>
+    {
+        var warnings = EuroScopeLaunchPlanner.Warnings([
+            new(present, true), new(present.ToUpperInvariant(), true), new(gone, true),
+            new(gone, false), new("", true), new("", true)
+        ], File.Exists);
+
+        Equal(2, warnings.Count);
+        True(warnings[0].Contains("ESAA TWR", StringComparison.Ordinal) && warnings[0].Contains("same session", StringComparison.Ordinal));
+        True(warnings[1].Contains("ESAA OBS", StringComparison.Ordinal) && warnings[1].Contains("skips", StringComparison.Ordinal));
+    });
+
+    Run("a set without duplicates or missing profiles has no warnings", () =>
+    {
+        Equal(0, EuroScopeLaunchPlanner.Warnings([new(present, true), new(gone, false), new("", true)], File.Exists).Count);
+    });
+
+    Run("a probe failure counts the profile as missing", () =>
+    {
+        var warnings = EuroScopeLaunchPlanner.Warnings([new(present, true)], _ => throw new IOException("Synthetic probe failure."));
+        Equal(1, warnings.Count);
     });
 
     Run("normalization clamps delays, fills identifiers and bounds the entry count", () =>

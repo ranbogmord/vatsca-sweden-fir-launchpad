@@ -15,6 +15,8 @@ public partial class EuroScopeLaunchSetWindow : Window
     public ObservableCollection<ProfileOption> Profiles { get; } = [];
     private readonly ObservableCollection<LaunchSetItem> _sets = [];
     private readonly ProfileOption? _defaultProfile;
+    // Profiles found in the data folder when the editor opened; anything else is shown as missing.
+    private readonly HashSet<string> _availablePaths;
 
     public IReadOnlyList<EuroScopeLaunchSetDefinition> Sets { get; private set; } = [];
     public Guid? ActiveSetId { get; private set; }
@@ -23,6 +25,8 @@ public partial class EuroScopeLaunchSetWindow : Window
         Guid? activeSetId, ProfileOption? defaultProfile)
     {
         foreach (var profile in profiles) Profiles.Add(profile);
+        _availablePaths = profiles.Where(profile => profile.FilePath != null).Select(profile => profile.FilePath!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         InitializeComponent();
 
         Height = Math.Min(Height, SystemParameters.WorkArea.Height);
@@ -41,6 +45,7 @@ public partial class EuroScopeLaunchSetWindow : Window
         SetList.ItemsSource = _sets;
         _sets.CollectionChanged += (_, _) => RefreshSetButtons();
         SetList.SelectedItem = _sets.FirstOrDefault(set => set.IsActive) ?? _sets.FirstOrDefault();
+        foreach (var set in _sets) RefreshWarnings(set);
         ShowSelected();
     }
 
@@ -51,6 +56,7 @@ public partial class EuroScopeLaunchSetWindow : Window
         var item = new LaunchSetItem(id, name, active);
         item.ActiveChanged += ActiveChanged;
         item.Rows.CollectionChanged += (_, _) => { item.Renumber(); if (ReferenceEquals(item, Selected)) RefreshRowState(); };
+        item.RowsChanged += () => RefreshWarnings(item);
         return item;
     }
 
@@ -67,7 +73,7 @@ public partial class EuroScopeLaunchSetWindow : Window
 
         var match = Profiles.FirstOrDefault(profile => string.Equals(profile.FilePath, path, StringComparison.OrdinalIgnoreCase));
         // Keep a saved entry visible even when its profile has moved or the data folder changed.
-        return match ?? AddProfile(new(Path.GetFileNameWithoutExtension(path) + " (not in the data folder)", path));
+        return match ?? AddProfile(new("⚠ " + Path.GetFileNameWithoutExtension(path) + " (not in the data folder)", path));
     }
 
     private ProfileOption AddProfile(ProfileOption profile) { Profiles.Add(profile); return profile; }
@@ -85,9 +91,25 @@ public partial class EuroScopeLaunchSetWindow : Window
         RefreshSetButtons();
     }
 
+    private IReadOnlyList<string> Warnings(LaunchSetItem set) => EuroScopeLaunchPlanner.Warnings(
+        set.Rows.Select(row => new EuroScopeLaunchCheck(row.Profile?.FilePath ?? string.Empty, row.Enabled)).ToArray(),
+        _availablePaths.Contains);
+
+    private void RefreshWarnings(LaunchSetItem set)
+    {
+        var warnings = Warnings(set);
+        set.HasWarnings = warnings.Count > 0;
+        if (!ReferenceEquals(set, Selected)) return;
+
+        WarningText.Text = string.Join(Environment.NewLine, warnings);
+        WarningPanel.Visibility = warnings.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void RefreshRowState()
     {
         var selected = Selected;
+        if (selected is null) WarningPanel.Visibility = Visibility.Collapsed;
+        else RefreshWarnings(selected);
         EmptyText.Visibility = selected is { Rows.Count: 0 } ? Visibility.Visible : Visibility.Collapsed;
         AddButton.IsEnabled = selected is not null && selected.Rows.Count < EuroScopeLaunchEntry.MaxEntries;
     }
@@ -177,7 +199,6 @@ public partial class EuroScopeLaunchSetWindow : Window
     private void Save_Click(object sender, RoutedEventArgs e)
     {
         var problems = new List<string>();
-        var duplicates = new List<string>();
         var sets = new List<EuroScopeLaunchSetDefinition>();
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Guid? active = null;
@@ -206,9 +227,6 @@ public partial class EuroScopeLaunchSetWindow : Window
                 active = set.Id;
             }
 
-            duplicates.AddRange(entries.Where(entry => entry.Enabled && entry.ProfilePath.Length > 0)
-                .GroupBy(entry => entry.ProfilePath, StringComparer.OrdinalIgnoreCase).Where(group => group.Count() > 1)
-                .Select(group => $"{EuroScopeLaunchPlanner.ProfileName(group.Key)} in {label}"));
             sets.Add(new(set.Id, name, entries));
         }
 
@@ -219,10 +237,7 @@ public partial class EuroScopeLaunchSetWindow : Window
             return;
         }
 
-        if (duplicates.Count > 0 && MessageBox.Show(this,
-                $"{string.Join(", ", duplicates)} is used by more than one instance. Those instances write the same session and settings files.\n\nSave anyway?",
-                Title, MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-
+        // Duplicate and missing profiles are shown inline and never block saving.
         Sets = sets;
         ActiveSetId = active;
         DialogResult = true;
@@ -235,12 +250,34 @@ public partial class EuroScopeLaunchSetWindow : Window
         private string _name;
         private bool _isActive;
 
+        private bool _hasWarnings;
+
         public event Action<LaunchSetItem>? ActiveChanged;
+        /// <summary>An instance was added, removed, moved or had its profile or switch changed.</summary>
+        public event Action? RowsChanged;
 
         public LaunchSetItem(Guid id, string name, bool active)
         {
             Id = id; _name = name; _isActive = active;
-            Rows.CollectionChanged += (_, _) => OnChanged(nameof(ListDetail));
+            Rows.CollectionChanged += (_, args) =>
+            {
+                foreach (LaunchSetRow row in args.NewItems ?? Array.Empty<LaunchSetRow>()) row.PropertyChanged += RowChanged;
+                foreach (LaunchSetRow row in args.OldItems ?? Array.Empty<LaunchSetRow>()) row.PropertyChanged -= RowChanged;
+                OnChanged(nameof(ListDetail));
+                RowsChanged?.Invoke();
+            };
+        }
+
+        private void RowChanged(object? sender, PropertyChangedEventArgs args)
+        {
+            if (args.PropertyName is nameof(LaunchSetRow.Profile) or nameof(LaunchSetRow.Enabled)) RowsChanged?.Invoke();
+        }
+
+        /// <summary>Set by the window: the set has a duplicate or missing profile.</summary>
+        public bool HasWarnings
+        {
+            get => _hasWarnings;
+            set { if (_hasWarnings == value) return; _hasWarnings = value; OnChanged(nameof(HasWarnings)); OnChanged(nameof(ListDetail)); }
         }
 
         public string Name
@@ -262,7 +299,8 @@ public partial class EuroScopeLaunchSetWindow : Window
         }
 
         public string ListLabel => string.IsNullOrWhiteSpace(Name) ? "(unnamed)" : Name;
-        public string ListDetail => $"{Rows.Count} instance{(Rows.Count == 1 ? "" : "s")}" + (IsActive ? " · used by Launch" : "");
+        public string ListDetail => $"{Rows.Count} instance{(Rows.Count == 1 ? "" : "s")}" + (IsActive ? " · used by Launch" : "") +
+            (HasWarnings ? " · ⚠ check profiles" : "");
 
         public void Renumber()
         {

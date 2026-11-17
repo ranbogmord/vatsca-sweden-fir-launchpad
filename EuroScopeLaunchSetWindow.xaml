@@ -111,6 +111,16 @@
                                    Text="No instances in this set yet."/>
                         <Button x:Name="AddButton" Content="+ Add instance" Click="Add_Click" HorizontalAlignment="Left"
                                 MinWidth="110" Margin="0,8,0,0" AutomationProperties.Name="Add instance to this set"/>
+                        <!-- Advisory only: duplicates and missing profiles never block Save or Launch. -->
+                        <Border x:Name="WarningPanel" Background="{DynamicResource WarningBg}" BorderBrush="{DynamicResource WarningFg}"
+                                BorderThickness="1" CornerRadius="3" Padding="8,6" Margin="0,10,0,0" Visibility="Collapsed">
+                            <DockPanel>
+                                <TextBlock DockPanel.Dock="Left" Text="⚠" Foreground="{DynamicResource WarningFg}" FontSize="{DynamicResource TextSize13}"
+                                           Margin="0,0,8,0" VerticalAlignment="Top" AutomationProperties.Name="Warning"/>
+                                <TextBlock x:Name="WarningText" Foreground="{DynamicResource WarningFg}" TextWrapping="Wrap"
+                                           AutomationProperties.LiveSetting="Polite"/>
+                            </DockPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </DockPanel>

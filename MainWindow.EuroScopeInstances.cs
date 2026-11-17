@@ -40,7 +40,12 @@ public partial class MainWindow
         row.LaunchSetName = ActiveLaunchSet?.Name ?? string.Empty;
         row.LaunchSetCount = EnabledLaunchEntries.Count;
         row.LaunchSetActive = LaunchSetActive;
+        row.LaunchSetMissingProfiles = MissingProfileNames(ActiveLaunchSet);
     }
+
+    /// <summary>Enabled entries whose profile file is gone. Launch skips them; the row and menu show a warning.</summary>
+    private static IReadOnlyList<string> MissingProfileNames(EuroScopeLaunchSetDefinition? set) =>
+        EuroScopeLaunchPlanner.MissingProfiles(EnabledEntries(set).Select(entry => new EuroScopeLaunchCheck(entry.ProfilePath, true)), File.Exists);
 
     private void UpdateEuroScopeInstanceSummary()
     {
@@ -101,16 +106,10 @@ public partial class MainWindow
             return;
         }
 
-        var notes = steps.Where(step => step.Kind != EuroScopeLaunchStepKind.Start || step.Message != null).ToArray();
-        if (notes.Length > 0)
-        {
-            var lines = steps.Select(step => $"{step.Order}. {step.ProfileName} — " + (step.Kind == EuroScopeLaunchStepKind.Start
-                ? (step == starts[0] ? "start" : "start when the previous window opens")
-                    + (step.DelaySeconds > 0 ? $", then wait {step.DelaySeconds} s" : "") + (step.Message is { } note ? " (" + note + ")" : "")
-                : step.Message));
-            if (MessageBox.Show(this, $"Start {starts.Length} EuroScope instance{(starts.Length == 1 ? "" : "s")} from {setName}?\n\n" + string.Join("\n", lines),
-                    setName, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.Yes) != MessageBoxResult.Yes) return;
-        }
+        // No confirmation: missing profiles are already flagged on the row and in the menu, and every
+        // skipped or already running entry is reported in the result.
+        var problems = steps.Where(step => step.Kind != EuroScopeLaunchStepKind.Start)
+            .Select(step => $"{step.ProfileName}: {step.Message}").ToList();
 
         _launchSequenceBusy = true;
         _launchSequenceCts = CancellationTokenSource.CreateLinkedTokenSource(_windowLifetime.Token);
@@ -120,7 +119,6 @@ public partial class MainWindow
 
         int started = 0;
         bool cancelled = false;
-        var problems = new List<string>();
         EuroScopeLaunchStep? previous = null;
 
         try

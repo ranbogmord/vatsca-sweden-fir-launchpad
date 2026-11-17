@@ -590,6 +590,32 @@ try
         row.LaunchSequenceStatus = ""; row.LaunchSetActive = false; row.RunningInstanceSummary = "2 instances running";
         Equal("2 instances running · Next launch: Sweden", row.SelectedProfileCaption);
     });
+    Run("a launch set with missing profiles warns on its caption, picker and Launch button", () =>
+    {
+        var row = new CheckResult { AppName = "EuroScope", HasEuroScopeManagement = true };
+        row.Profiles.Add(new("Sweden", "C:\\Synthetic\\Sweden.prf"));
+        row.SelectedProfile = row.Profiles[0];
+        row.LaunchSetMissingProfiles = ["ESAA OBS"];
+        True(!row.LaunchTargetWarning);
+
+        row.LaunchSetName = "Evening"; row.LaunchSetCount = 3; row.LaunchSetActive = true;
+        var notices = new HashSet<string?>();
+        row.PropertyChanged += (_, args) => notices.Add(args.PropertyName);
+        True(row.LaunchTargetWarning);
+        Equal("Launch set: Evening (3 profiles) · ⚠ 1 missing", row.SelectedProfileCaption);
+        True(row.LaunchTargetTooltip.Contains("Profile not found: ESAA OBS", StringComparison.Ordinal));
+        True(row.LaunchTooltip.Contains("Launch skips it", StringComparison.Ordinal));
+
+        row.LaunchSetMissingProfiles = ["ESAA OBS", "ESAA DEL"];
+        True(notices.Contains(nameof(CheckResult.LaunchTargetWarning)) && notices.Contains(nameof(CheckResult.LaunchTooltip)));
+        Equal("Launch set: Evening (3 profiles) · ⚠ 2 missing", row.SelectedProfileCaption);
+        True(row.LaunchTargetTooltip.Contains("ESAA OBS, ESAA DEL", StringComparison.Ordinal));
+
+        row.LaunchSetMissingProfiles = [];
+        True(!row.LaunchTargetWarning);
+        Equal("Launch set: Evening (3 profiles)", row.SelectedProfileCaption);
+        Equal("Launch EuroScope.", row.LaunchTooltip);
+    });
     Run("a running launch sequence offers Cancel ahead of other EuroScope actions", () =>
     {
         var row = new CheckResult { AppName = "EuroScope", HasEuroScopeManagement = true, Status = CheckStatus.NotConfigured };
