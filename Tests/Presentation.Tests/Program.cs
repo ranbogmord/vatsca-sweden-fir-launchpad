@@ -153,6 +153,23 @@ Check(restoreMaximized.Next(Shown(null, minimized: true), t0) == BrowserRestoreA
     restoreMaximized.Next(Shown(new(1920, 0, 2560, 1400), maximized: true), t0.AddSeconds(1.25)) == BrowserRestoreAction.Done && restoreMaximized.Moves == 0,
     "a maximized target is maximized from the minimized launch and confirmed without moves");
 
+// Review regression: a 100% primary, a 200% 3840x2160 middle monitor and a 100% third monitor in a top-aligned row.
+// Chromium lays out DIPs along touching monitors (the third starts at logical X=3840), which the primary-relative
+// launch conversion does not reproduce, so Edge's landing cannot be trusted there. The restore must still aim at
+// the saved physical frame and correct any landing that is off.
+DisplayArea[] chain = [new("P", new(0, 0, 1920, 1040), true, new(0, 0, 1920, 1080), 1),
+    new("M", new(1920, 0, 3840, 2120), false, new(1920, 0, 3840, 2160), 2),
+    new("T", new(5760, 0, 1920, 1040), false, new(5760, 0, 1920, 1080), 1)];
+var chainSaved = new ExternalWindowPlacement(new(5860, 100, 800, 600), false, "T", new(7, 0, 7, 7));
+var chainTarget = ExternalWindowLayout.Resolve(chainSaved, chain)!;
+var chainRestore = new BrowserRestoreSequence(chainTarget, chainSaved.Frame);
+Check(chainTarget.Display.Name == "T" && chainTarget.Bounds == new WindowBounds(5860, 100, 800, 600) && chainRestore.Outer == new WindowBounds(5853, 100, 814, 607),
+    "a window beyond a scaled middle monitor targets its exact saved physical frame");
+var chainLanded = new ExternalWindowState(false, false, new(3940, 100, 800, 600), "M");
+Check(chainRestore.Next(chainLanded, t0) == BrowserRestoreAction.Move &&
+    chainRestore.Next(new ExternalWindowState(false, false, new(5860, 100, 800, 600), "T"), t0.AddSeconds(1)) == BrowserRestoreAction.Done && chainRestore.Moves == 1,
+    "a window Edge places on the wrong monitor of a mixed-DPI chain is moved once to its physical frame");
+
 var otherApp = new AppSettings();
 Check(!tracker.Observe(otherApp, "VatEFS", windowOpen: true, right, canSave: true) && !tracker.Observe(otherApp, "VatEFS", windowOpen: false, null, canSave: true) &&
     otherApp.VatirisWindowLeft is null, "VatEFS observations are neither recorded nor saved");
