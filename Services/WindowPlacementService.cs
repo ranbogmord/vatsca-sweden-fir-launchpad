@@ -29,7 +29,7 @@ public static class WindowPlacementService
     [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hwnd);
     [DllImport("user32.dll")] private static extern bool IsZoomed(IntPtr hwnd);
-    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hwnd, int command);
+    [DllImport("user32.dll")] private static extern bool ShowWindowAsync(IntPtr hwnd, int command);
     [DllImport("user32.dll")] private static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect value, int size);
     [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
@@ -149,13 +149,15 @@ public static class WindowPlacementService
         return new ExternalWindowPlacement(visible, false, monitor, frame);
     });
 
-    /// <summary>Maximizes a shown external window once. False while it is not yet visible, so the caller can wait.</summary>
-    public static bool MaximizeExternal(IntPtr hwnd)
-    {
-        if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd)) return false;
-        if (!IsZoomed(hwnd)) ShowWindow(hwnd, 3 /* SW_MAXIMIZE */);
-        return true;
-    }
+    /// <summary>True once a shown external window is maximized.</summary>
+    public static bool IsMaximizedExternal(IntPtr hwnd) => hwnd != IntPtr.Zero && IsWindowVisible(hwnd) && IsZoomed(hwnd);
+
+    /// <summary>
+    /// Posts a maximize request to a shown external window without waiting for its UI thread, so an unresponsive
+    /// application cannot block the caller. True when the request was posted; confirm with <see cref="IsMaximizedExternal"/>.
+    /// </summary>
+    public static bool RequestMaximizeExternal(IntPtr hwnd) =>
+        hwnd != IntPtr.Zero && IsWindowVisible(hwnd) && ShowWindowAsync(hwnd, 3 /* SW_MAXIMIZE */);
 
     /// <summary>Resolves the saved placement against the connected displays, or null to leave Edge's default.</summary>
     public static ExternalWindowTarget? PlanExternal(ExternalWindowPlacement saved) => PhysicalPixels(() =>

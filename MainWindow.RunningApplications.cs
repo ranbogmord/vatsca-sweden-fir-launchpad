@@ -68,7 +68,10 @@ public partial class MainWindow
     // The one exception to never touching the browser window: a launch that restores a maximized placement
     // maximizes the exact process Launchpad just started, once, after Edge has shown it on the saved display.
     // Placement capture pauses until then so the briefly normal window is not saved as the new placement.
+    // The request is posted asynchronously so an unresponsive Edge cannot block Launchpad's dispatcher;
+    // later ticks confirm the result and repost at most once a second until the deadline.
     private static readonly TimeSpan BrowserMaximizeTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan BrowserMaximizeRetry = TimeSpan.FromSeconds(1);
     private DispatcherTimer? _browserMaximizeTimer;
     private string? _browserMaximizeApp;
 
@@ -77,12 +80,16 @@ public partial class MainWindow
         StopBrowserMaximize();
         if (TrackedBrowser(appName) is not { } launched) return;
         var deadline = DateTime.UtcNow + BrowserMaximizeTimeout;
+        DateTime? lastRequest = null;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         timer.Tick += (_, _) =>
         {
-            if (_windowClosed || DateTime.UtcNow > deadline || !ApplicationProcessControl.IsAlive(launched) ||
-                WindowPlacementService.MaximizeExternal(ApplicationProcessControl.MainWindow(launched)))
-                StopBrowserMaximize();
+            var now = DateTime.UtcNow;
+            if (_windowClosed || now > deadline || !ApplicationProcessControl.IsAlive(launched)) { StopBrowserMaximize(); return; }
+            var hwnd = ApplicationProcessControl.MainWindow(launched);
+            if (WindowPlacementService.IsMaximizedExternal(hwnd)) { StopBrowserMaximize(); return; }
+            if ((lastRequest is null || now - lastRequest >= BrowserMaximizeRetry) && WindowPlacementService.RequestMaximizeExternal(hwnd))
+                lastRequest = now;
         };
         _browserMaximizeTimer = timer;
         _browserMaximizeApp = appName;
