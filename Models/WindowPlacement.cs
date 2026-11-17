@@ -149,6 +149,60 @@ public sealed class BrowserPlacementTracker
     }
 }
 
+/// <summary>An observation of a shown external window: visible frame in physical pixels (null while minimized).</summary>
+public readonly record struct ExternalWindowState(bool Minimized, bool Maximized, WindowBounds? Visible, string Monitor);
+
+public enum BrowserRestoreAction { Wait, Restore, Maximize, Move, Done }
+
+/// <summary>
+/// Brings a browser window that Launchpad started minimized into its saved placement. Edge's launch arguments
+/// already place its restore rectangle, so the usual path is one restore (or maximize) request. When Chromium's
+/// coordinate conversion still lands it elsewhere, the window is moved to its physical outer rectangle; requests
+/// are throttled so each has time to apply, and moving stops after <see cref="MaxMoves"/> attempts.
+/// </summary>
+public sealed class BrowserRestoreSequence(ExternalWindowTarget target, WindowInsets frame)
+{
+    public const double Tolerance = 4;
+    public const int MaxMoves = 2;
+    public static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(1);
+    private DateTime? _lastRequest;
+    private int _moves;
+
+    public ExternalWindowTarget Target { get; } = target;
+
+    /// <summary>Physical outer rectangle for a corrective move: the visible frame plus its invisible borders.</summary>
+    public WindowBounds Outer { get; } = frame.Expand(target.Bounds);
+
+    public int Moves => _moves;
+
+    /// <param name="window">Null until the window is shown.</param>
+    public BrowserRestoreAction Next(ExternalWindowState? window, DateTime now)
+    {
+        if (window is not { } state) return BrowserRestoreAction.Wait;
+        bool settling = _lastRequest is { } last && now - last < RetryInterval;
+        if (state.Minimized)
+            return settling ? BrowserRestoreAction.Wait : Request(now, Target.Maximize ? BrowserRestoreAction.Maximize : BrowserRestoreAction.Restore);
+        if (Target.Maximize)
+            return state.Maximized ? BrowserRestoreAction.Done : settling ? BrowserRestoreAction.Wait : Request(now, BrowserRestoreAction.Maximize);
+        // A maximized window here was chosen by the user or Edge after restoring; leave it alone.
+        if (state.Maximized || state.Visible is not { } visible || IsNear(visible, Target.Bounds)) return BrowserRestoreAction.Done;
+        if (settling) return BrowserRestoreAction.Wait;
+        if (_moves >= MaxMoves) return BrowserRestoreAction.Done;
+        _moves++;
+        return Request(now, BrowserRestoreAction.Move);
+    }
+
+    public static bool IsNear(WindowBounds a, WindowBounds b) =>
+        Math.Abs(a.Left - b.Left) <= Tolerance && Math.Abs(a.Top - b.Top) <= Tolerance &&
+        Math.Abs(a.Width - b.Width) <= Tolerance && Math.Abs(a.Height - b.Height) <= Tolerance;
+
+    private BrowserRestoreAction Request(DateTime now, BrowserRestoreAction action)
+    {
+        _lastRequest = now;
+        return action;
+    }
+}
+
 /// <summary>Only VATIRIS keeps a remembered browser-window placement.</summary>
 public static class BrowserWindowSettings
 {

@@ -120,6 +120,39 @@ Check(tracker.Observe(tracked, "VATIRIS", windowOpen: false, null, canSave: true
 Check(!tracker.Observe(tracked, "VATIRIS", windowOpen: false, null, canSave: true), "a saved placement is not saved again on later ticks");
 Check(!tracker.Observe(tracked, "VATIRIS", windowOpen: true, right, canSave: true) && !tracker.Observe(tracked, "VATIRIS", windowOpen: false, null, canSave: true),
     "reopening at an unchanged placement does not save settings");
+var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+var normalTarget = ExternalWindowLayout.Resolve(bordered, displays)!;
+var restoreNormal = new BrowserRestoreSequence(normalTarget, bordered.Frame);
+ExternalWindowState Shown(WindowBounds? visible, bool minimized = false, bool maximized = false) => new(minimized, maximized, visible, @"\\.\DISPLAY1");
+Check(restoreNormal.Outer == new WindowBounds(-7, 0, 974, 1047), "a corrective move uses the physical outer rectangle including saved borders");
+Check(restoreNormal.Next(null, t0) == BrowserRestoreAction.Wait, "restoring waits until the launched window is shown");
+Check(restoreNormal.Next(Shown(null, minimized: true), t0) == BrowserRestoreAction.Restore &&
+    restoreNormal.Next(Shown(null, minimized: true), t0.AddMilliseconds(250)) == BrowserRestoreAction.Wait &&
+    restoreNormal.Next(Shown(null, minimized: true), t0.AddSeconds(1)) == BrowserRestoreAction.Restore,
+    "a minimized launch is restored, and the request repeats at most once a second");
+Check(restoreNormal.Next(Shown(new(2, -1, 958, 1043)), t0.AddSeconds(1.25)) == BrowserRestoreAction.Done && restoreNormal.Moves == 0,
+    "a window restored within a few pixels of its target needs no move");
+var restoreOff = new BrowserRestoreSequence(normalTarget, bordered.Frame);
+var landedOff = Shown(new(1500, 200, 960, 1040));
+Check(restoreOff.Next(landedOff, t0) == BrowserRestoreAction.Move && restoreOff.Moves == 1 &&
+    restoreOff.Next(landedOff, t0.AddMilliseconds(500)) == BrowserRestoreAction.Wait,
+    "a window restored at the wrong place is moved, and the move is given time to apply");
+Check(restoreOff.Next(landedOff, t0.AddSeconds(1)) == BrowserRestoreAction.Move && restoreOff.Moves == 2 &&
+    restoreOff.Next(landedOff, t0.AddSeconds(2)) == BrowserRestoreAction.Done && restoreOff.Moves == 2,
+    "corrective moves stop after two attempts");
+var restoreFixed = new BrowserRestoreSequence(normalTarget, bordered.Frame);
+Check(restoreFixed.Next(landedOff, t0) == BrowserRestoreAction.Move &&
+    restoreFixed.Next(Shown(new(0, 0, 960, 1040)), t0.AddSeconds(1)) == BrowserRestoreAction.Done && restoreFixed.Moves == 1,
+    "restoring finishes once a corrective move lands");
+Check(new BrowserRestoreSequence(normalTarget, bordered.Frame).Next(Shown(null, maximized: true), t0) == BrowserRestoreAction.Done,
+    "a normal target that the window maximized meanwhile is left alone");
+var restoreMaximized = new BrowserRestoreSequence(maximizedInPlace!, default);
+Check(restoreMaximized.Next(Shown(null, minimized: true), t0) == BrowserRestoreAction.Maximize &&
+    restoreMaximized.Next(Shown(new(2000, 50, 1200, 900)), t0.AddSeconds(0.5)) == BrowserRestoreAction.Wait &&
+    restoreMaximized.Next(Shown(new(2000, 50, 1200, 900)), t0.AddSeconds(1)) == BrowserRestoreAction.Maximize &&
+    restoreMaximized.Next(Shown(new(1920, 0, 2560, 1400), maximized: true), t0.AddSeconds(1.25)) == BrowserRestoreAction.Done && restoreMaximized.Moves == 0,
+    "a maximized target is maximized from the minimized launch and confirmed without moves");
+
 var otherApp = new AppSettings();
 Check(!tracker.Observe(otherApp, "VatEFS", windowOpen: true, right, canSave: true) && !tracker.Observe(otherApp, "VatEFS", windowOpen: false, null, canSave: true) &&
     otherApp.VatirisWindowLeft is null, "VatEFS observations are neither recorded nor saved");
