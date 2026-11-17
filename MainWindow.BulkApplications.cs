@@ -120,14 +120,14 @@ public partial class MainWindow
     {
         if (StartBlockReason(target) is { } blocked) throw new InvalidOperationException(blocked);
         ProcessStartInfo start;
-        BrowserRestoreSequence? browserRestore = null;
+        BrowserMaximizeSequence? browserMaximize = null;
         if (target.IsBrowser)
         {
             var profile = Path.Combine(AppDataDir, target.Id + "Profile");
             start = new(ApplicationBrowserPath) { UseShellExecute = false };
             start.ArgumentList.Add("--app=" + target.LaunchPath);
             start.ArgumentList.Add("--user-data-dir=" + profile);
-            browserRestore = AddBrowserPlacementArguments(target.Id, start);
+            browserMaximize = AddBrowserPlacementArguments(target.Id, start);
         }
         else if (target.IsEuroScope)
         {
@@ -142,7 +142,7 @@ public partial class MainWindow
         using var process = Process.Start(start);
         if (process is null) return false;
         if (target.IsBrowser) RememberBrowser(target.Id, process);
-        if (browserRestore is not null) RestoreBrowserWhenShown(target.Id, browserRestore);
+        if (browserMaximize is not null) MaximizeBrowserWhenShown(target.Id, browserMaximize);
         ReportingService.RecordUsage(ReportingEventName.ApplicationOpened,
             new ReportingDetails { Application = ReportingApplicationFor(target.Id), Operation = ReportingOperation.Launch });
         Logger.Log("LAUNCH", target.Id + ": start requested");

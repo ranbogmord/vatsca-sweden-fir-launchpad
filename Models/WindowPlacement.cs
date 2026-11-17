@@ -74,32 +74,115 @@ public static class ExternalWindowLayout
     }
 
     /// <summary>
-    /// Chromium's --window-position/--window-size use screen DIPs. With one scale factor this is an exact division.
-    /// Mixed scales approximate Chromium's display layout from the primary display and may open a few pixels off.
+    /// Chromium's --window-position/--window-size use screen DIPs. Each display's DIP origin comes from
+    /// <see cref="ChromiumDipLayout"/>; displays it cannot place (gaps, no primary at 0,0) fall back to a
+    /// primary-relative approximation.
     /// </summary>
     public static WindowBounds ToChromiumDip(WindowBounds physical, DisplayArea display, IReadOnlyList<DisplayArea> displays)
     {
-        static double Valid(double scale) => double.IsFinite(scale) && scale > 0 ? scale : 1;
-        double scale = Valid(display.Scale);
+        double scale = ValidScale(display.Scale);
+        var monitor = display.Monitor ?? display.WorkArea;
+        double originX, originY;
+        if (display.Name is not null && ChromiumDipLayout(displays) is { } layout && layout.TryGetValue(display.Name, out var dip))
+            (originX, originY) = (dip.Left, dip.Top);
+        else
+            (originX, originY) = PrimaryRelativeOrigin(display, displays);
+        return new(Math.Round(originX + (physical.Left - monitor.Left) / scale), Math.Round(originY + (physical.Top - monitor.Top) / scale),
+            Math.Round(physical.Width / scale), Math.Round(physical.Height / scale));
+    }
+
+    private static double ValidScale(double scale) => double.IsFinite(scale) && scale > 0 ? scale : 1;
+
+    private static (double X, double Y) PrimaryRelativeOrigin(DisplayArea display, IReadOnlyList<DisplayArea> displays)
+    {
+        double scale = ValidScale(display.Scale);
         var monitor = display.Monitor ?? display.WorkArea;
         var primaryDisplay = displays.FirstOrDefault(d => d.Primary);
         var primary = primaryDisplay.Monitor ?? primaryDisplay.WorkArea;
-        double primaryScale = primaryDisplay.Name is null ? scale : Valid(primaryDisplay.Scale);
-        double originX, originY;
-        if (displays.All(d => Valid(d.Scale) == scale) || display.Primary || primaryDisplay.Name is null)
+        double primaryScale = primaryDisplay.Name is null ? scale : ValidScale(primaryDisplay.Scale);
+        if (displays.All(d => ValidScale(d.Scale) == scale) || display.Primary || primaryDisplay.Name is null)
+            return (monitor.Left / scale, monitor.Top / scale);
+        return (monitor.Left + monitor.Width <= primary.Left ? (monitor.Left + monitor.Width) / primaryScale - monitor.Width / scale : monitor.Left / primaryScale,
+            monitor.Top + monitor.Height <= primary.Top ? (monitor.Top + monitor.Height) / primaryScale - monitor.Height / scale : monitor.Top / primaryScale);
+    }
+
+    private enum EdgePosition { Top, Right, Bottom, Left }
+
+    /// <summary>
+    /// Chromium's Windows DIP layout (ui/display/win/screen_win.cc DisplayInfosToScreenWinDisplays and
+    /// scaling_util.cc CalculateDisplayPlacement): the display at physical 0,0 is the root at DIP 0,0, and each
+    /// display touching an already placed one is attached to that parent's edge with an offset scaled by the
+    /// parent's factor, depth first in display order. Null without a display at 0,0; displays not connected to
+    /// it by touching edges are left out.
+    /// </summary>
+    public static IReadOnlyDictionary<string, WindowBounds>? ChromiumDipLayout(IReadOnlyList<DisplayArea> displays)
+    {
+        var monitors = displays.Where(d => d.Name is not null).Select(d => (Display: d, Rect: d.Monitor ?? d.WorkArea)).ToList();
+        int root = monitors.FindIndex(m => m.Rect.Left == 0 && m.Rect.Top == 0);
+        if (root < 0) return null;
+        static WindowBounds DipRect(DisplayArea d, WindowBounds r, double x, double y) =>
+            new(x, y, Math.Floor(r.Width / ValidScale(d.Scale)), Math.Floor(r.Height / ValidScale(d.Scale)));
+        var layout = new Dictionary<string, WindowBounds>(StringComparer.Ordinal)
         {
-            originX = monitor.Left / scale;
-            originY = monitor.Top / scale;
+            [monitors[root].Display.Name] = DipRect(monitors[root].Display, monitors[root].Rect, 0, 0),
+        };
+        var remaining = monitors.Where((_, index) => index != root).ToList();
+        var parents = new Stack<(DisplayArea Display, WindowBounds Rect)>();
+        parents.Push(monitors[root]);
+        while (parents.Count > 0)
+        {
+            var parent = parents.Pop();
+            foreach (var child in remaining.Where(m => Touch(parent.Rect, m.Rect)).ToList())
+            {
+                remaining.Remove(child);
+                var (position, fromEnd, offset) = Placement(parent.Display, parent.Rect, child.Display, child.Rect);
+                var parentDip = layout[parent.Display.Name];
+                var size = DipRect(child.Display, child.Rect, 0, 0);
+                bool horizontalEdge = position is EdgePosition.Top or EdgePosition.Bottom;
+                if (fromEnd) offset = (horizontalEdge ? parentDip.Width - size.Width : parentDip.Height - size.Height) - offset;
+                var (x, y) = position switch
+                {
+                    EdgePosition.Top => (parentDip.Left + offset, parentDip.Top - size.Height),
+                    EdgePosition.Right => (parentDip.Left + parentDip.Width, parentDip.Top + offset),
+                    EdgePosition.Bottom => (parentDip.Left + offset, parentDip.Top + parentDip.Height),
+                    _ => (parentDip.Left - size.Width, parentDip.Top + offset),
+                };
+                layout[child.Display.Name] = size with { Left = x, Top = y };
+                parents.Push(child);
+            }
         }
+        return layout;
+    }
+
+    private static bool Touch(WindowBounds a, WindowBounds b)
+    {
+        double maxLeft = Math.Max(a.Left, b.Left), maxTop = Math.Max(a.Top, b.Top);
+        double minRight = Math.Min(a.Left + a.Width, b.Left + b.Width), minBottom = Math.Min(a.Top + a.Height, b.Top + b.Height);
+        return (maxLeft == minRight && a.Top <= b.Top + b.Height && b.Top <= a.Top + a.Height) ||
+            (maxTop == minBottom && a.Left <= b.Left + b.Width && b.Left <= a.Left + a.Width);
+    }
+
+    private static (EdgePosition Position, bool FromEnd, double Offset) Placement(DisplayArea parent, WindowBounds p, DisplayArea current, WindowBounds c)
+    {
+        double maxLeft = Math.Max(p.Left, c.Left), maxTop = Math.Max(p.Top, c.Top);
+        double minRight = Math.Min(p.Left + p.Width, c.Left + c.Width), minBottom = Math.Min(p.Top + p.Height, c.Top + c.Height);
+        EdgePosition position;
+        if (maxLeft == minRight && maxTop == minBottom)
+            position = p.Top + p.Height == maxTop ? EdgePosition.Bottom : p.Left == maxLeft ? EdgePosition.Left : EdgePosition.Top;
+        else if (maxLeft == minRight)
+            position = p.Left == maxLeft ? EdgePosition.Left : EdgePosition.Right;
         else
-        {
-            originX = monitor.Left + monitor.Width <= primary.Left
-                ? (monitor.Left + monitor.Width) / primaryScale - monitor.Width / scale : monitor.Left / primaryScale;
-            originY = monitor.Top + monitor.Height <= primary.Top
-                ? (monitor.Top + monitor.Height) / primaryScale - monitor.Height / scale : monitor.Top / primaryScale;
-        }
-        return new(Math.Round(originX + (physical.Left - monitor.Left) / scale), Math.Round(originY + (physical.Top - monitor.Top) / scale),
-            Math.Round(physical.Width / scale), Math.Round(physical.Height / scale));
+            position = p.Top == maxTop ? EdgePosition.Top : EdgePosition.Bottom;
+        bool horizontalEdge = position is EdgePosition.Top or EdgePosition.Bottom;
+        double parentBegin = horizontalEdge ? p.Left : p.Top;
+        double parentEnd = (horizontalEdge ? p.Left + p.Width : p.Top + p.Height) - parentBegin;
+        double currentBegin = (horizontalEdge ? c.Left : c.Top) - parentBegin;
+        double currentEnd = (horizontalEdge ? c.Left + c.Width : c.Top + c.Height) - parentBegin;
+        static double ScaleOffset(double length, double scale, double offset) => Math.Floor(length / ValidScale(scale) * (offset / length));
+        if (parentEnd == currentEnd && currentBegin != 0) return (position, true, 0);
+        if (currentBegin >= 0 && currentBegin <= parentEnd) return (position, false, ScaleOffset(parentEnd, parent.Scale, currentBegin));
+        if (currentEnd >= 0 && currentEnd <= parentEnd) return (position, true, ScaleOffset(parentEnd, parent.Scale, parentEnd - currentEnd));
+        return (position, false, ScaleOffset(currentEnd - currentBegin, current.Scale, currentBegin));
     }
 
     private static (WindowBounds Bounds, bool Maximize, DisplayArea Display)? ResolvePhysical(ExternalWindowPlacement saved, IReadOnlyList<DisplayArea> displays)
@@ -149,57 +232,30 @@ public sealed class BrowserPlacementTracker
     }
 }
 
-/// <summary>An observation of a shown external window: visible frame in physical pixels (null while minimized).</summary>
-public readonly record struct ExternalWindowState(bool Minimized, bool Maximized, WindowBounds? Visible, string Monitor);
+/// <summary>An observation of a shown external window.</summary>
+public readonly record struct ExternalWindowState(bool Minimized, bool Maximized);
 
-public enum BrowserRestoreAction { Wait, Restore, Maximize, Move, Done }
+public enum BrowserMaximizeAction { Wait, Maximize, Done }
 
 /// <summary>
-/// Brings a browser window that Launchpad started minimized into its saved placement. Edge's launch arguments
-/// already place its restore rectangle, so the usual path is one restore (or maximize) request. When Chromium's
-/// coordinate conversion still lands it elsewhere, the window is moved to its physical outer rectangle; requests
-/// are throttled so each has time to apply, and moving stops after <see cref="MaxMoves"/> attempts.
+/// Edge cannot open a placed --app window maximized: the placement switches reset its show state. A launch whose saved
+/// placement is maximized therefore opens at its display's work area and is maximized once shown. Requests are
+/// throttled so each has time to apply.
 /// </summary>
-public sealed class BrowserRestoreSequence(ExternalWindowTarget target, WindowInsets frame)
+public sealed class BrowserMaximizeSequence
 {
-    public const double Tolerance = 4;
-    public const int MaxMoves = 2;
     public static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(1);
     private DateTime? _lastRequest;
-    private int _moves;
-
-    public ExternalWindowTarget Target { get; } = target;
-
-    /// <summary>Physical outer rectangle for a corrective move: the visible frame plus its invisible borders.</summary>
-    public WindowBounds Outer { get; } = frame.Expand(target.Bounds);
-
-    public int Moves => _moves;
 
     /// <param name="window">Null until the window is shown.</param>
-    public BrowserRestoreAction Next(ExternalWindowState? window, DateTime now)
+    public BrowserMaximizeAction Next(ExternalWindowState? window, DateTime now)
     {
-        if (window is not { } state) return BrowserRestoreAction.Wait;
-        bool settling = _lastRequest is { } last && now - last < RetryInterval;
-        if (state.Minimized)
-            return settling ? BrowserRestoreAction.Wait : Request(now, Target.Maximize ? BrowserRestoreAction.Maximize : BrowserRestoreAction.Restore);
-        if (Target.Maximize)
-            return state.Maximized ? BrowserRestoreAction.Done : settling ? BrowserRestoreAction.Wait : Request(now, BrowserRestoreAction.Maximize);
-        // A maximized window here was chosen by the user or Edge after restoring; leave it alone.
-        if (state.Maximized || state.Visible is not { } visible || IsNear(visible, Target.Bounds)) return BrowserRestoreAction.Done;
-        if (settling) return BrowserRestoreAction.Wait;
-        if (_moves >= MaxMoves) return BrowserRestoreAction.Done;
-        _moves++;
-        return Request(now, BrowserRestoreAction.Move);
-    }
-
-    public static bool IsNear(WindowBounds a, WindowBounds b) =>
-        Math.Abs(a.Left - b.Left) <= Tolerance && Math.Abs(a.Top - b.Top) <= Tolerance &&
-        Math.Abs(a.Width - b.Width) <= Tolerance && Math.Abs(a.Height - b.Height) <= Tolerance;
-
-    private BrowserRestoreAction Request(DateTime now, BrowserRestoreAction action)
-    {
+        if (window is not { } state) return BrowserMaximizeAction.Wait;
+        // A window minimized meanwhile was minimized by the user; leave it alone.
+        if (state.Maximized || state.Minimized) return BrowserMaximizeAction.Done;
+        if (_lastRequest is { } last && now - last < RetryInterval) return BrowserMaximizeAction.Wait;
         _lastRequest = now;
-        return action;
+        return BrowserMaximizeAction.Maximize;
     }
 }
 

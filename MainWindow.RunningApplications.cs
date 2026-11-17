@@ -53,52 +53,41 @@ public partial class MainWindow
             SettingsService.TrySave(_settings);
     }
 
-    // With a saved placement, Edge gets the launch arguments (its restore rectangle) and is started minimized, so
-    // nothing appears at a wrong spot. Null when nothing is saved or the saved display is no longer connected:
-    // Edge then opens normally with its own default placement.
-    private BrowserRestoreSequence? AddBrowserPlacementArguments(string appName, ProcessStartInfo start)
+    // Edge gets the saved placement as launch arguments (its restore rectangle). Returns a maximize sequence when the
+    // saved window was maximized; null otherwise, including when nothing is saved or the saved display is no longer
+    // connected, in which case Edge opens with its own default placement.
+    private BrowserMaximizeSequence? AddBrowserPlacementArguments(string appName, ProcessStartInfo start)
     {
         if (BrowserWindowSettings.Get(_settings, appName) is not { } saved) return null;
         if (WindowPlacementService.PlanExternal(saved) is not { } target) return null;
         foreach (var argument in ExternalWindowLayout.EdgeArguments(target))
             start.ArgumentList.Add(argument);
-        start.WindowStyle = ProcessWindowStyle.Minimized;
-        return new BrowserRestoreSequence(target, saved.Frame);
+        return target.Maximize ? new BrowserMaximizeSequence() : null;
     }
 
-    // The exception to never touching the browser window: a launch Launchpad started minimized is restored (or
-    // maximized) into its saved placement, and moved once or twice if Chromium's conversion landed it elsewhere.
-    // Only the exact launched process is touched. All requests are posted asynchronously so an unresponsive Edge
-    // cannot block Launchpad's dispatcher. Placement capture pauses until the sequence finishes.
-    private static readonly TimeSpan BrowserRestoreTimeout = TimeSpan.FromSeconds(15);
+    // The exception to never touching the browser window: a launch whose saved placement was maximized opens at its
+    // display's work area and is maximized once shown. Only the exact launched process is touched, the request is
+    // posted asynchronously so an unresponsive Edge cannot block Launchpad's dispatcher, and placement capture pauses
+    // until the sequence finishes.
+    private static readonly TimeSpan BrowserMaximizeTimeout = TimeSpan.FromSeconds(15);
     private DispatcherTimer? _browserRestoreTimer;
     private string? _browserRestoreApp;
 
-    private void RestoreBrowserWhenShown(string appName, BrowserRestoreSequence sequence)
+    private void MaximizeBrowserWhenShown(string appName, BrowserMaximizeSequence sequence)
     {
         StopBrowserRestore();
         if (TrackedBrowser(appName) is not { } launched) return;
-        var deadline = DateTime.UtcNow + BrowserRestoreTimeout;
+        var deadline = DateTime.UtcNow + BrowserMaximizeTimeout;
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         timer.Tick += (_, _) =>
         {
             var now = DateTime.UtcNow;
-            if (_windowClosed || !ApplicationProcessControl.IsAlive(launched)) { StopBrowserRestore(); return; }
+            if (_windowClosed || now > deadline || !ApplicationProcessControl.IsAlive(launched)) { StopBrowserRestore(); return; }
             var hwnd = ApplicationProcessControl.MainWindow(launched);
-            var state = WindowPlacementService.ObserveExternal(hwnd);
-            if (now > deadline)
+            switch (sequence.Next(WindowPlacementService.ObserveExternal(hwnd), now))
             {
-                // Never leave the window minimized because the sequence gave up.
-                if (state is { Minimized: true }) WindowPlacementService.RequestRestoreExternal(hwnd);
-                StopBrowserRestore();
-                return;
-            }
-            switch (sequence.Next(state, now))
-            {
-                case BrowserRestoreAction.Restore: WindowPlacementService.RequestRestoreExternal(hwnd); break;
-                case BrowserRestoreAction.Maximize: WindowPlacementService.RequestMaximizeExternal(hwnd); break;
-                case BrowserRestoreAction.Move: WindowPlacementService.RequestMoveExternal(hwnd, sequence.Outer); break;
-                case BrowserRestoreAction.Done: StopBrowserRestore(); break;
+                case BrowserMaximizeAction.Maximize: WindowPlacementService.RequestMaximizeExternal(hwnd); break;
+                case BrowserMaximizeAction.Done: StopBrowserRestore(); break;
             }
         };
         _browserRestoreTimer = timer;

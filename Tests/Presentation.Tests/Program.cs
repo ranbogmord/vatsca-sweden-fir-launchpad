@@ -121,54 +121,42 @@ Check(!tracker.Observe(tracked, "VATIRIS", windowOpen: false, null, canSave: tru
 Check(!tracker.Observe(tracked, "VATIRIS", windowOpen: true, right, canSave: true) && !tracker.Observe(tracked, "VATIRIS", windowOpen: false, null, canSave: true),
     "reopening at an unchanged placement does not save settings");
 var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-var normalTarget = ExternalWindowLayout.Resolve(bordered, displays)!;
-var restoreNormal = new BrowserRestoreSequence(normalTarget, bordered.Frame);
-ExternalWindowState Shown(WindowBounds? visible, bool minimized = false, bool maximized = false) => new(minimized, maximized, visible, @"\\.\DISPLAY1");
-Check(restoreNormal.Outer == new WindowBounds(-7, 0, 974, 1047), "a corrective move uses the physical outer rectangle including saved borders");
-Check(restoreNormal.Next(null, t0) == BrowserRestoreAction.Wait, "restoring waits until the launched window is shown");
-Check(restoreNormal.Next(Shown(null, minimized: true), t0) == BrowserRestoreAction.Restore &&
-    restoreNormal.Next(Shown(null, minimized: true), t0.AddMilliseconds(250)) == BrowserRestoreAction.Wait &&
-    restoreNormal.Next(Shown(null, minimized: true), t0.AddSeconds(1)) == BrowserRestoreAction.Restore,
-    "a minimized launch is restored, and the request repeats at most once a second");
-Check(restoreNormal.Next(Shown(new(2, -1, 958, 1043)), t0.AddSeconds(1.25)) == BrowserRestoreAction.Done && restoreNormal.Moves == 0,
-    "a window restored within a few pixels of its target needs no move");
-var restoreOff = new BrowserRestoreSequence(normalTarget, bordered.Frame);
-var landedOff = Shown(new(1500, 200, 960, 1040));
-Check(restoreOff.Next(landedOff, t0) == BrowserRestoreAction.Move && restoreOff.Moves == 1 &&
-    restoreOff.Next(landedOff, t0.AddMilliseconds(500)) == BrowserRestoreAction.Wait,
-    "a window restored at the wrong place is moved, and the move is given time to apply");
-Check(restoreOff.Next(landedOff, t0.AddSeconds(1)) == BrowserRestoreAction.Move && restoreOff.Moves == 2 &&
-    restoreOff.Next(landedOff, t0.AddSeconds(2)) == BrowserRestoreAction.Done && restoreOff.Moves == 2,
-    "corrective moves stop after two attempts");
-var restoreFixed = new BrowserRestoreSequence(normalTarget, bordered.Frame);
-Check(restoreFixed.Next(landedOff, t0) == BrowserRestoreAction.Move &&
-    restoreFixed.Next(Shown(new(0, 0, 960, 1040)), t0.AddSeconds(1)) == BrowserRestoreAction.Done && restoreFixed.Moves == 1,
-    "restoring finishes once a corrective move lands");
-Check(new BrowserRestoreSequence(normalTarget, bordered.Frame).Next(Shown(null, maximized: true), t0) == BrowserRestoreAction.Done,
-    "a normal target that the window maximized meanwhile is left alone");
-var restoreMaximized = new BrowserRestoreSequence(maximizedInPlace!, default);
-Check(restoreMaximized.Next(Shown(null, minimized: true), t0) == BrowserRestoreAction.Maximize &&
-    restoreMaximized.Next(Shown(new(2000, 50, 1200, 900)), t0.AddSeconds(0.5)) == BrowserRestoreAction.Wait &&
-    restoreMaximized.Next(Shown(new(2000, 50, 1200, 900)), t0.AddSeconds(1)) == BrowserRestoreAction.Maximize &&
-    restoreMaximized.Next(Shown(new(1920, 0, 2560, 1400), maximized: true), t0.AddSeconds(1.25)) == BrowserRestoreAction.Done && restoreMaximized.Moves == 0,
-    "a maximized target is maximized from the minimized launch and confirmed without moves");
+var maximize = new BrowserMaximizeSequence();
+Check(maximize.Next(null, t0) == BrowserMaximizeAction.Wait, "maximizing waits until the launched window is shown");
+Check(maximize.Next(new(false, false), t0) == BrowserMaximizeAction.Maximize &&
+    maximize.Next(new(false, false), t0.AddMilliseconds(500)) == BrowserMaximizeAction.Wait &&
+    maximize.Next(new(false, false), t0.AddSeconds(1)) == BrowserMaximizeAction.Maximize,
+    "a shown window is maximized, and the request repeats at most once a second");
+Check(maximize.Next(new(false, true), t0.AddSeconds(1.25)) == BrowserMaximizeAction.Done, "maximizing finishes once the window is maximized");
+Check(new BrowserMaximizeSequence().Next(new(true, false), t0) == BrowserMaximizeAction.Done, "a window the user minimized meanwhile is left alone");
 
 // Review regression: a 100% primary, a 200% 3840x2160 middle monitor and a 100% third monitor in a top-aligned row.
 // Chromium lays out DIPs along touching monitors (the third starts at logical X=3840), which the primary-relative
-// launch conversion does not reproduce, so Edge's landing cannot be trusted there. The restore must still aim at
-// the saved physical frame and correct any landing that is off.
+// launch conversion did not reproduce. The launch arguments must follow Chromium's chained layout.
 DisplayArea[] chain = [new("P", new(0, 0, 1920, 1040), true, new(0, 0, 1920, 1080), 1),
     new("M", new(1920, 0, 3840, 2120), false, new(1920, 0, 3840, 2160), 2),
     new("T", new(5760, 0, 1920, 1040), false, new(5760, 0, 1920, 1080), 1)];
 var chainSaved = new ExternalWindowPlacement(new(5860, 100, 800, 600), false, "T", new(7, 0, 7, 7));
 var chainTarget = ExternalWindowLayout.Resolve(chainSaved, chain)!;
-var chainRestore = new BrowserRestoreSequence(chainTarget, chainSaved.Frame);
-Check(chainTarget.Display.Name == "T" && chainTarget.Bounds == new WindowBounds(5860, 100, 800, 600) && chainRestore.Outer == new WindowBounds(5853, 100, 814, 607),
+Check(chainTarget.Display.Name == "T" && chainTarget.Bounds == new WindowBounds(5860, 100, 800, 600),
     "a window beyond a scaled middle monitor targets its exact saved physical frame");
-var chainLanded = new ExternalWindowState(false, false, new(3940, 100, 800, 600), "M");
-Check(chainRestore.Next(chainLanded, t0) == BrowserRestoreAction.Move &&
-    chainRestore.Next(new ExternalWindowState(false, false, new(5860, 100, 800, 600), "T"), t0.AddSeconds(1)) == BrowserRestoreAction.Done && chainRestore.Moves == 1,
-    "a window Edge places on the wrong monitor of a mixed-DPI chain is moved once to its physical frame");
+var chainLayout = ExternalWindowLayout.ChromiumDipLayout(chain)!;
+Check(chainLayout["P"] == new WindowBounds(0, 0, 1920, 1080) && chainLayout["M"] == new WindowBounds(1920, 0, 1920, 1080) &&
+    chainLayout["T"] == new WindowBounds(3840, 0, 1920, 1080), "Chromium's DIP layout attaches each monitor to the touching one before it");
+Check(ExternalWindowLayout.ToChromiumDip(new(5860, 100, 800, 600), chain[2], chain) == new WindowBounds(3940, 100, 800, 600) &&
+    ExternalWindowLayout.EdgeArguments(chainTarget).SequenceEqual(["--window-position=3933,100", "--window-size=814,607"]),
+    "a window beyond a scaled middle monitor gets Chromium's chained DIP position");
+DisplayArea[] below = [new("P", new(0, 0, 1920, 1040), true, new(0, 0, 1920, 1080), 1), new("B", new(480, 1080, 1920, 1040), false, new(480, 1080, 1920, 1080), 2)];
+Check(ExternalWindowLayout.ChromiumDipLayout(below)!["B"] == new WindowBounds(480, 1080, 960, 540) &&
+    ExternalWindowLayout.ToChromiumDip(new(580, 1180, 800, 600), below[1], below) == new WindowBounds(530, 1130, 400, 300),
+    "a scaled monitor below the primary keeps its offset along the shared edge");
+DisplayArea[] endAligned = [new("P", new(0, 0, 1920, 1040), true, new(0, 0, 1920, 1080), 1), new("E", new(1920, -360, 2880, 1400), false, new(1920, -360, 2880, 1440), 2)];
+Check(ExternalWindowLayout.ChromiumDipLayout(endAligned)!["E"] == new WindowBounds(1920, 360, 1440, 720),
+    "a scaled monitor bottom-aligned with its parent is placed from the shared end");
+DisplayArea[] gap = [new("P", new(0, 0, 1920, 1040), true, new(0, 0, 1920, 1080), 1), new("G", new(2000, 0, 1920, 1040), false, new(2000, 0, 1920, 1080), 2)];
+Check(!ExternalWindowLayout.ChromiumDipLayout(gap)!.ContainsKey("G") &&
+    ExternalWindowLayout.ToChromiumDip(new(2100, 100, 800, 600), gap[1], gap) == new WindowBounds(2050, 50, 400, 300),
+    "a monitor separated by a gap falls back to the primary-relative approximation");
 
 var otherApp = new AppSettings();
 Check(!tracker.Observe(otherApp, "VatEFS", windowOpen: true, right, canSave: true) && !tracker.Observe(otherApp, "VatEFS", windowOpen: false, null, canSave: true) &&

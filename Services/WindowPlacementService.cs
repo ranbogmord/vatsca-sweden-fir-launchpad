@@ -149,29 +149,14 @@ public static class WindowPlacementService
         return new ExternalWindowPlacement(visible, false, monitor, frame);
     });
 
-    /// <summary>State of a shown external window in physical pixels, or null while it has no visible window.</summary>
-    public static ExternalWindowState? ObserveExternal(IntPtr hwnd) => hwnd == IntPtr.Zero ? null : PhysicalPixels<ExternalWindowState?>(() =>
-    {
-        if (!IsWindowVisible(hwnd)) return null;
-        bool minimized = IsIconic(hwnd);
-        var monitor = Info(MonitorFromWindow(hwnd, 2 /* nearest */)).Device ?? "";
-        return new ExternalWindowState(minimized, !minimized && IsZoomed(hwnd), minimized ? null : VisibleBounds(hwnd), monitor);
-    });
+    /// <summary>State of a shown external window, or null while it has no visible window.</summary>
+    public static ExternalWindowState? ObserveExternal(IntPtr hwnd) =>
+        hwnd == IntPtr.Zero || !IsWindowVisible(hwnd) ? null : new ExternalWindowState(IsIconic(hwnd), IsZoomed(hwnd));
 
-    // These requests are posted without waiting for the target's UI thread, so an unresponsive application
-    // cannot block the caller. Each returns true when the request was posted; confirm with ObserveExternal.
-    public static bool RequestRestoreExternal(IntPtr hwnd) => RequestShowExternal(hwnd, 9 /* SW_RESTORE */);
-
-    public static bool RequestMaximizeExternal(IntPtr hwnd) => RequestShowExternal(hwnd, 3 /* SW_MAXIMIZE */);
-
-    /// <summary>Asks a shown external window to move to an outer rectangle in physical pixels.</summary>
-    public static bool RequestMoveExternal(IntPtr hwnd, WindowBounds outer) =>
-        hwnd != IntPtr.Zero && outer.IsValid && PhysicalPixels(() => IsWindowVisible(hwnd) &&
-            SetWindowPos(hwnd, IntPtr.Zero, (int)Math.Round(outer.Left), (int)Math.Round(outer.Top), (int)Math.Round(outer.Width),
-                (int)Math.Round(outer.Height), 0x0004 /* SWP_NOZORDER */ | 0x0010 /* SWP_NOACTIVATE */ | 0x4000 /* SWP_ASYNCWINDOWPOS */));
-
-    private static bool RequestShowExternal(IntPtr hwnd, int command) =>
-        hwnd != IntPtr.Zero && IsWindowVisible(hwnd) && ShowWindowAsync(hwnd, command);
+    /// <summary>Posts a maximize request without waiting for the target's UI thread, so an unresponsive application
+    /// cannot block the caller. Returns true when the request was posted; confirm with ObserveExternal.</summary>
+    public static bool RequestMaximizeExternal(IntPtr hwnd) =>
+        hwnd != IntPtr.Zero && IsWindowVisible(hwnd) && ShowWindowAsync(hwnd, 3 /* SW_MAXIMIZE */);
 
     /// <summary>Resolves the saved placement against the connected displays, or null to leave Edge's default.</summary>
     public static ExternalWindowTarget? PlanExternal(ExternalWindowPlacement saved) => PhysicalPixels(() =>
